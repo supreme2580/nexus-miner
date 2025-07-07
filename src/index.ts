@@ -172,11 +172,12 @@ app.get('/run', (req, res) => {
         });
       });
     } else {
-      // CLI not found, use expect script
-      sendEvent({ type: 'status', message: '📦 Installing Nexus CLI with automation...' });
-      console.log('📦 Installing Nexus CLI with automation...');
+      // CLI not found, use direct installation
+      sendEvent({ type: 'status', message: '📦 Installing Nexus CLI with direct method...' });
+      console.log('📦 Installing Nexus CLI with direct method...');
       
-      exec('./auto-install.exp', (error, stdout, stderr) => {
+      // Use direct curl installation with yes to accept terms
+      exec('curl -s https://cli.nexus.xyz/ | yes | sh', (error, stdout, stderr) => {
         if (error) {
           console.error('❌ CLI installation failed:', error.message);
           sendEvent({ type: 'error', message: '❌ CLI installation failed: ' + error.message });
