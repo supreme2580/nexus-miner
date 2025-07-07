@@ -65,6 +65,34 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', message: 'Nexus node service is active.' });
 });
+// Global variable to store the last server output
+let lastServerOutput = '🚀 Nexus Network CLI Setup Server is running...';
+app.get('/keep-alive', (req, res) => {
+    // Set headers for Server-Sent Events to keep connection alive
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*'
+    });
+    const sendKeepAlive = () => {
+        res.write(`data: ${JSON.stringify({
+            type: 'keep-alive',
+            message: lastServerOutput,
+            timestamp: new Date().toISOString()
+        })}\n\n`);
+    };
+    // Send initial message
+    sendKeepAlive();
+    // Send keep-alive message every 30 seconds
+    const keepAliveInterval = setInterval(() => {
+        sendKeepAlive();
+    }, 30000);
+    // Clean up on client disconnect
+    req.on('close', () => {
+        clearInterval(keepAliveInterval);
+    });
+});
 app.get('/run', (req, res) => {
     // Set headers for Server-Sent Events
     res.writeHead(200, {
@@ -75,6 +103,8 @@ app.get('/run', (req, res) => {
     });
     const sendEvent = (data) => {
         res.write(`data: ${JSON.stringify(data)}\n\n`);
+        // Update the last server output for keep-alive endpoint
+        lastServerOutput = data.message;
     };
     sendEvent({ type: 'status', message: '🚀 Starting Nexus CLI setup...' });
     // Step 1: Check if nexus-cli is already installed
@@ -162,7 +192,7 @@ app.get('/run', (req, res) => {
             sendEvent({ type: 'status', message: '📦 Installing Nexus CLI with direct method...' });
             console.log('📦 Installing Nexus CLI with direct method...');
             // Use direct curl installation with yes to accept terms
-            (0, child_process_1.exec)('bash -c "yes | sh -c \\"$(curl -fsSL https://cli.nexus.xyz/)\\""', (error, stdout, stderr) => {
+            (0, child_process_1.exec)(`curl -fsSL https://cli.nexus.xyz/ | sed '/read -p.*\\/dev\\/tty/d' | sh`, (error, stdout, stderr) => {
                 if (error) {
                     console.error('❌ CLI installation failed:', error.message);
                     sendEvent({ type: 'error', message: '❌ CLI installation failed: ' + error.message });

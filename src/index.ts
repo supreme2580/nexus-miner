@@ -65,6 +65,40 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Nexus node service is active.' });
 });
 
+// Global variable to store the last server output
+let lastServerOutput = '🚀 Nexus Network CLI Setup Server is running...';
+
+app.get('/keep-alive', (req, res) => {
+  // Set headers for Server-Sent Events to keep connection alive
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*'
+  });
+
+  const sendKeepAlive = () => {
+    res.write(`data: ${JSON.stringify({ 
+      type: 'keep-alive', 
+      message: lastServerOutput,
+      timestamp: new Date().toISOString()
+    })}\n\n`);
+  };
+
+  // Send initial message
+  sendKeepAlive();
+
+  // Send keep-alive message every 30 seconds
+  const keepAliveInterval = setInterval(() => {
+    sendKeepAlive();
+  }, 30000);
+
+  // Clean up on client disconnect
+  req.on('close', () => {
+    clearInterval(keepAliveInterval);
+  });
+});
+
 app.get('/run', (req, res) => {
   // Set headers for Server-Sent Events
   res.writeHead(200, {
@@ -76,6 +110,8 @@ app.get('/run', (req, res) => {
 
   const sendEvent = (data: any) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
+    // Update the last server output for keep-alive endpoint
+    lastServerOutput = data.message;
   };
 
   sendEvent({ type: 'status', message: '🚀 Starting Nexus CLI setup...' });

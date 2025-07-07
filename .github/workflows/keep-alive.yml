@@ -1,0 +1,18 @@
+name: Keep Server Alive
+
+on:
+  schedule:
+    # Run every minute (minimum interval for GitHub Actions)
+    - cron: '* * * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  ping-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Keep-Alive Endpoint
+        run: |
+          curl -s -X GET "https://nexus-miner.onrender.com/keep-alive" \
+            -H "Accept: text/event-stream" \
+            -H "Cache-Control: no-cache" \
+            --max-time 30 
