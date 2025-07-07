@@ -177,7 +177,7 @@ app.get('/run', (req, res) => {
       console.log('📦 Installing Nexus CLI with direct method...');
       
       // Use direct curl installation with yes to accept terms
-      exec('yes | sh -c "$(curl -fsSL https://cli.nexus.xyz/)"', (error, stdout, stderr) => {
+      exec('zsh -c "yes | sh -c \\"$(curl -fsSL https://cli.nexus.xyz/)\\""', (error, stdout, stderr) => {
         if (error) {
           console.error('❌ CLI installation failed:', error.message);
           sendEvent({ type: 'error', message: '❌ CLI installation failed: ' + error.message });
