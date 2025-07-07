@@ -93,7 +93,7 @@ app.get('/run', (req, res) => {
       sendEvent({ type: 'status', message: '📦 Running nexus-install.sh...' });
       console.log('📦 Running nexus-install.sh...');
       
-      exec('./nexus-install.sh', (installError, installStdout, installStderr) => {
+      exec('./nexus-install.sh', (installError, _installStdout, _installStderr) => {
         if (installError) {
           console.error('❌ Installation failed:', installError.message);
           sendEvent({ type: 'error', message: '❌ Installation failed: ' + installError.message });
