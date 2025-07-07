@@ -93,6 +93,15 @@ app.get('/keep-alive', (req, res) => {
         clearInterval(keepAliveInterval);
     });
 });
+// Simple ping endpoint for cron jobs
+app.get('/ping', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        message: lastServerOutput,
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
+});
 app.get('/run', (req, res) => {
     // Set headers for Server-Sent Events
     res.writeHead(200, {
