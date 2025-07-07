@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+
+# Expect script to automate Nexus CLI installation
+set timeout 60
+
+# Start the installation script
+spawn ./nexus-install.sh
+
+# Wait for the terms of use prompt and respond with "Y"
+expect "Do you agree to the Nexus Beta Terms of Use"
+send "Y\r"
+
+# Wait for the script to complete
+expect eof 
