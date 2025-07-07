@@ -114,76 +114,66 @@ app.get('/run', (req, res) => {
         if (!checkError && checkStdout.includes('nexus-network')) {
             sendEvent({ type: 'status', message: '✅ Nexus CLI is already installed: ' + checkStdout.trim() });
             console.log('✅ Nexus CLI is already installed:', checkStdout.trim());
-            // Run nexus-install.sh directly since CLI is available
-            sendEvent({ type: 'status', message: '📦 Running nexus-install.sh...' });
-            console.log('📦 Running nexus-install.sh...');
-            (0, child_process_1.exec)('./nexus-install.sh', (installError, _installStdout, _installStderr) => {
-                if (installError) {
-                    console.error('❌ Installation failed:', installError.message);
-                    sendEvent({ type: 'error', message: '❌ Installation failed: ' + installError.message });
+            // CLI is already available, proceed directly to setup
+            sendEvent({ type: 'status', message: '🔄 Proceeding with setup...' });
+            console.log('🔄 Proceeding with setup...');
+            // Restart terminal environment
+            sendEvent({ type: 'status', message: '🔄 Restarting terminal environment...' });
+            console.log('🔄 Restarting terminal environment...');
+            // Detect shell and use appropriate profile
+            const shell = process.env.SHELL || '';
+            let profileFile = '~/.zshrc'; // default
+            console.log('🔍 Detected shell:', shell);
+            sendEvent({ type: 'status', message: '🔍 Detected shell: ' + shell });
+            if (shell.includes('bash')) {
+                profileFile = '~/.bashrc';
+            }
+            else if (shell.includes('zsh')) {
+                profileFile = '~/.zshrc';
+            }
+            else if (shell.includes('fish')) {
+                profileFile = '~/.config/fish/config.fish';
+            }
+            else {
+                profileFile = '~/.profile';
+            }
+            sendEvent({ type: 'status', message: '📝 Using shell profile: ' + profileFile });
+            console.log('📝 Using shell profile:', profileFile);
+            // Skip sourcing problematic profile and just export PATH directly
+            sendEvent({ type: 'status', message: '🔄 Updating PATH directly...' });
+            console.log('🔄 Updating PATH directly...');
+            (0, child_process_1.exec)('export PATH="$HOME/.nexus/bin:$PATH" && echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
+                if (sourceError) {
+                    console.error('❌ Failed to restart terminal:', sourceError.message);
+                    sendEvent({ type: 'error', message: '❌ Failed to restart terminal: ' + sourceError.message });
                     res.end();
                     return;
                 }
-                sendEvent({ type: 'status', message: '✅ Installation completed' });
-                console.log('✅ Installation completed');
-                // Restart terminal environment
-                sendEvent({ type: 'status', message: '🔄 Restarting terminal environment...' });
-                console.log('🔄 Restarting terminal environment...');
-                // Detect shell and use appropriate profile
-                const shell = process.env.SHELL || '';
-                let profileFile = '~/.zshrc'; // default
-                console.log('🔍 Detected shell:', shell);
-                sendEvent({ type: 'status', message: '🔍 Detected shell: ' + shell });
-                if (shell.includes('bash')) {
-                    profileFile = '~/.bashrc';
-                }
-                else if (shell.includes('zsh')) {
-                    profileFile = '~/.zshrc';
-                }
-                else if (shell.includes('fish')) {
-                    profileFile = '~/.config/fish/config.fish';
-                }
-                else {
-                    profileFile = '~/.profile';
-                }
-                sendEvent({ type: 'status', message: '📝 Using shell profile: ' + profileFile });
-                console.log('📝 Using shell profile:', profileFile);
-                // Skip sourcing problematic profile and just export PATH directly
-                sendEvent({ type: 'status', message: '🔄 Updating PATH directly...' });
-                console.log('🔄 Updating PATH directly...');
-                (0, child_process_1.exec)('export PATH="$HOME/.nexus/bin:$PATH" && echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
-                    if (sourceError) {
-                        console.error('❌ Failed to restart terminal:', sourceError.message);
-                        sendEvent({ type: 'error', message: '❌ Failed to restart terminal: ' + sourceError.message });
+                sendEvent({ type: 'status', message: '✅ Terminal environment updated' });
+                console.log('✅ Terminal environment updated');
+                // Start the node with node ID
+                const nodeId = process.env.NEXUS_NODE_ID || '12954263'; // Use the node ID from previous run
+                sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
+                console.log('🚀 Starting Nexus node with ID:', nodeId);
+                // Start the node in background mode to avoid interactive input issues
+                (0, child_process_1.exec)(`nexus-network start --node-id ${nodeId} > /dev/null 2>&1 &`, (startError, startStdout, startStderr) => {
+                    if (startError) {
+                        console.error('❌ Node start failed:', startError.message);
+                        sendEvent({ type: 'error', message: '❌ Node start failed: ' + startError.message });
+                        if (startStderr) {
+                            sendEvent({ type: 'error', message: 'Node start stderr: ' + startStderr });
+                        }
                         res.end();
                         return;
                     }
-                    sendEvent({ type: 'status', message: '✅ Terminal environment updated' });
-                    console.log('✅ Terminal environment updated');
-                    // Start the node with node ID
-                    const nodeId = process.env.NEXUS_NODE_ID || '12954263'; // Use the node ID from previous run
-                    sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
-                    console.log('🚀 Starting Nexus node with ID:', nodeId);
-                    // Start the node in background mode to avoid interactive input issues
-                    (0, child_process_1.exec)(`nexus-network start --node-id ${nodeId} > /dev/null 2>&1 &`, (startError, startStdout, startStderr) => {
-                        if (startError) {
-                            console.error('❌ Node start failed:', startError.message);
-                            sendEvent({ type: 'error', message: '❌ Node start failed: ' + startError.message });
-                            if (startStderr) {
-                                sendEvent({ type: 'error', message: 'Node start stderr: ' + startStderr });
-                            }
-                            res.end();
-                            return;
-                        }
-                        // Give it a moment to start up
-                        setTimeout(() => {
-                            console.log('✅ Node started successfully in background');
-                            sendEvent({ type: 'status', message: '✅ Node started successfully' });
-                            sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
-                            sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
-                            res.end();
-                        }, 2000);
-                    });
+                    // Give it a moment to start up
+                    setTimeout(() => {
+                        console.log('✅ Node started successfully in background');
+                        sendEvent({ type: 'status', message: '✅ Node started successfully' });
+                        sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
+                        sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
+                        res.end();
+                    }, 2000);
                 });
             });
         }
