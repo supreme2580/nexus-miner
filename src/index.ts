@@ -185,11 +185,15 @@ app.get('/run', (req, res) => {
       sendEvent({ type: 'status', message: '📝 Using shell profile: ' + profileFile });
       console.log('📝 Using shell profile:', profileFile);
       
-      // Skip sourcing problematic profile and just export PATH directly
-      sendEvent({ type: 'status', message: '🔄 Updating PATH directly...' });
-      console.log('🔄 Updating PATH directly...');
-      
-      exec('export PATH="$HOME/.nexus/bin:$PATH" && echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
+              // Skip sourcing problematic profile and just export PATH directly
+        sendEvent({ type: 'status', message: '🔄 Updating PATH directly...' });
+        console.log('🔄 Updating PATH directly...');
+        
+        // Set PATH in current process environment
+        process.env.PATH = `${process.env.HOME}/.nexus/bin:${process.env.PATH}`;
+        console.log('Updated PATH:', process.env.PATH);
+        
+        exec('echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
         if (sourceError) {
           console.error('❌ Failed to restart terminal:', sourceError.message);
           sendEvent({ type: 'error', message: '❌ Failed to restart terminal: ' + sourceError.message });
@@ -274,7 +278,7 @@ app.get('/run', (req, res) => {
       console.log('📦 Installing Nexus CLI with direct method...');
       
       // Use spawn for real-time streaming of the installation
-      const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sed \'/read -p.*\/dev\/tty/d\' | sh'], {
+      const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sed "s/read -p.*\\/dev\\/tty//g" | sh'], {
         stdio: ['pipe', 'pipe', 'pipe']
       });
 
@@ -334,7 +338,11 @@ app.get('/run', (req, res) => {
         sendEvent({ type: 'status', message: '🔄 Updating PATH directly...' });
         console.log('🔄 Updating PATH directly...');
         
-        exec('export PATH="$HOME/.nexus/bin:$PATH" && echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
+        // Set PATH in current process environment
+        process.env.PATH = `${process.env.HOME}/.nexus/bin:${process.env.PATH}`;
+        console.log('Updated PATH:', process.env.PATH);
+        
+        exec('echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
           if (sourceError) {
             console.error('❌ Failed to restart terminal:', sourceError.message);
             sendEvent({ type: 'error', message: '❌ Failed to restart terminal: ' + sourceError.message });
