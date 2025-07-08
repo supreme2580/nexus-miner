@@ -242,14 +242,14 @@ app.get('/run', (req, res) => {
               let nodeOutput = '';
               let nodeError = '';
 
-              term.onData((data) => {
+              term.onData((data: string) => {
                 const output = data.toString();
                 nodeOutput += output;
                 sendTerminalOutput(output);
                 process.stdout.write(output);
               });
 
-              term.onExit(({ exitCode, signal }) => {
+              term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
                 if (exitCode === 0) {
                   console.log('✅ Node started successfully');
                   sendEvent({ type: 'status', message: '✅ Node started successfully' });
@@ -364,14 +364,14 @@ app.get('/run', (req, res) => {
 
           let nodeOutput = '';
 
-          term.onData((data) => {
+          term.onData((data: string) => {
             const output = data.toString();
             nodeOutput += output;
             sendTerminalOutput(output);
             process.stdout.write(output);
           });
 
-          term.onExit(({ exitCode, signal }) => {
+          term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
             if (exitCode === 0) {
               console.log('✅ Node started successfully');
               sendEvent({ type: 'status', message: '✅ Node started successfully' });
