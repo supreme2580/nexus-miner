@@ -154,255 +154,58 @@ app.get('/run', (req, res) => {
 
   const sendEvent = (data: any) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
-    // Update the last server output for keep-alive endpoint (truncated for memory efficiency)
-    if (data.message && data.message.length > MAX_OUTPUT_SIZE) {
-      lastServerOutput = data.message.substring(0, MAX_OUTPUT_SIZE) + '...';
-    } else {
-      lastServerOutput = data.message || lastServerOutput;
-    }
-  };
-
-  // Function to send raw terminal output with colors (memory efficient)
-  const sendTerminalOutput = (output: string) => {
-    // Truncate output if too large to prevent memory bloat
-    const truncatedOutput = output.length > MAX_OUTPUT_SIZE ? 
-      output.substring(0, MAX_OUTPUT_SIZE) + '...' : output;
-    
-    res.write(`data: ${JSON.stringify({ 
-      type: 'terminal', 
-      output: truncatedOutput,
-      timestamp: new Date().toISOString()
-    })}\n\n`);
-    lastServerOutput = truncatedOutput;
+    lastServerOutput = data.message || lastServerOutput;
   };
 
   sendEvent({ type: 'status', message: '🚀 Starting Nexus CLI setup...' });
   logMemoryUsage();
   
-  // Step 1: Check if nexus-cli is already installed
-  sendEvent({ type: 'status', message: '🔍 Checking if Nexus CLI is already installed...' });
-  console.log('🔍 Checking if Nexus CLI is already installed...');
+  // Simple Nexus CLI installation
+  sendEvent({ type: 'status', message: '📦 Installing Nexus CLI...' });
+  console.log('📦 Installing Nexus CLI...');
   
-  exec('nexus-cli -V', (checkError, checkStdout, checkStderr) => {
-    if (!checkError && checkStdout.includes('nexus-network')) {
-      sendEvent({ type: 'status', message: '✅ Nexus CLI is already installed: ' + checkStdout.trim() });
-      console.log('✅ Nexus CLI is already installed:', checkStdout.trim());
-      
-      // CLI is already available, proceed directly to setup
-      sendEvent({ type: 'status', message: '🔄 Proceeding with setup...' });
-      console.log('🔄 Proceeding with setup...');
-      
-      // Restart terminal environment
-      sendEvent({ type: 'status', message: '🔄 Restarting terminal environment...' });
-      console.log('🔄 Restarting terminal environment...');
-      
-      // Detect shell and use appropriate profile
-      const shell = process.env.SHELL || '';
-      let profileFile = '~/.zshrc'; // default
-      
-      console.log('🔍 Detected shell:', shell);
-      sendEvent({ type: 'status', message: '🔍 Detected shell: ' + shell });
-      
-      if (shell.includes('bash')) {
-        profileFile = '~/.bashrc';
-      } else if (shell.includes('zsh')) {
-        profileFile = '~/.zshrc';
-      } else if (shell.includes('fish')) {
-        profileFile = '~/.config/fish/config.fish';
-      } else {
-        profileFile = '~/.profile';
-      }
-      
-      sendEvent({ type: 'status', message: '📝 Using shell profile: ' + profileFile });
-      console.log('📝 Using shell profile:', profileFile);
-      
-              // Skip sourcing problematic profile and just export PATH directly
-        sendEvent({ type: 'status', message: '🔄 Updating PATH directly...' });
-        console.log('🔄 Updating PATH directly...');
-        
-        // Set PATH in current process environment
-        process.env.PATH = `${process.env.HOME}/.nexus/bin:${process.env.PATH}`;
-        console.log('Updated PATH:', process.env.PATH);
-        
-        exec('echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
-        if (sourceError) {
-          console.error('❌ Failed to restart terminal:', sourceError.message);
-          sendEvent({ type: 'error', message: '❌ Failed to restart terminal: ' + sourceError.message });
-          res.end();
-          return;
-        }
-        
-        sendEvent({ type: 'status', message: '✅ Terminal environment updated' });
-        console.log('✅ Terminal environment updated');
-        
-        // Start the node with node ID
-        const nodeId = process.env.NEXUS_NODE_ID || '12954263'; // Use the node ID from previous run
-        sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
-        console.log('🚀 Starting Nexus node with ID:', nodeId);
-        
-                  // First check if nexus-network is available
-          exec('which nexus-network', (whichError, whichStdout) => {
-            if (whichError) {
-              console.error('❌ nexus-network command not found');
-              sendEvent({ type: 'error', message: '❌ nexus-network command not found. Please ensure it is installed and in PATH.' });
-              res.end();
-              return;
-            }
-            
-            console.log(`nexus-network found at: ${whichStdout.trim()}`);
-            
-            // Try to run nexus-network with help to see if it works
-            exec('nexus-network --help', (helpError, helpStdout) => {
-              if (helpError) {
-                console.error('❌ nexus-network command failed:', helpError.message);
-                sendEvent({ type: 'error', message: '❌ nexus-network command failed: ' + helpError.message });
-                res.end();
-                return;
-              }
-              
-              console.log('nexus-network command is working');
-              
-              // Now try to start the node with pseudo-terminal to handle input reader
-              console.log(`Starting nexus-network with node ID: ${nodeId}`);
-              
-              // Create a pseudo-terminal
-              const term = pty.spawn('nexus-network', ['start', '--node-id', nodeId], {
-                name: 'xterm-256color',
-                cols: 80,
-                rows: 30,
-                cwd: process.cwd(),
-                env: process.env
-              });
+  const installProcess = spawn('sh', ['-c', 'curl https://cli.nexus.xyz/ | sh'], {
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
 
-                        // Don't accumulate large outputs in memory (only to server console)
-          term.onData((data: string) => {
-            const output = data.toString();
-            terminalOutputBuffer += output;
-            if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
-              terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
-            }
-            process.stdout.write(output);
-          });
-
-              term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
-                if (exitCode === 0) {
-                  console.log('✅ Node started successfully');
-                  sendEvent({ type: 'status', message: '✅ Node started successfully' });
-                  sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
-                  sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
-                } else {
-                  console.error('❌ Node start failed with code:', exitCode);
-                  console.error('signal:', signal);
-                  sendEvent({ type: 'error', message: '❌ Node start failed with code: ' + exitCode });
-                  if (signal) {
-                    sendEvent({ type: 'error', message: 'signal: ' + signal });
-                  }
-                }
-                res.end();
-              });
-            });
-          });
-      });
-    } else {
-      // CLI not found, use direct installation
-      sendEvent({ type: 'status', message: '📦 Installing Nexus CLI with direct method...' });
-      console.log('📦 Installing Nexus CLI with direct method...');
-
-            // Install Nexus CLI directly with automatic yes responses
-      sendEvent({ type: 'status', message: '📦 Installing Nexus CLI...' });
-      console.log('📦 Installing Nexus CLI...');
-      
-      // Use a non-interactive installation approach
-      const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sed "s/read -p.*\\/dev\\/tty//g" | sh'], {
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-
-      // Memory-efficient streaming - process data in chunks (only to server console)
-      installProcess.stdout.on('data', (data: Buffer) => {
-        const output = data.toString();
-        terminalOutputBuffer += output;
-        if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
-          terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
-        }
-        process.stdout.write(output);
-      });
-      installProcess.stderr.on('data', (data: Buffer) => {
-        const output = data.toString();
-        terminalOutputBuffer += output;
-        if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
-          terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
-        }
-        process.stderr.write(output);
-      });
-
-      // Send 'Y' responses for any remaining prompts
-      installProcess.stdin.write('Y\n');
-      
-      installProcess.on('close', (code) => {
-        if (code === 0) {
-          sendEvent({ type: 'status', message: '✅ Nexus CLI installed successfully' });
-          console.log('✅ Nexus CLI installed successfully');
-          
-          // Restart terminal environment
-          sendEvent({ type: 'status', message: '🔄 Restarting terminal environment...' });
-          console.log('🔄 Restarting terminal environment...');
-          
-          // Set PATH in current process environment
-          process.env.PATH = `${process.env.HOME}/.nexus/bin:${process.env.PATH}`;
-          console.log('Updated PATH:', process.env.PATH);
-          
-          sendEvent({ type: 'status', message: '✅ Terminal environment updated' });
-          console.log('✅ Terminal environment updated');
-          
-          // Start the node with node ID
-          const nodeId = process.env.NEXUS_NODE_ID || '13092844'; // Use a default node ID
-          sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
-          console.log('🚀 Starting Nexus node with ID:', nodeId);
-          
-          // Start the node with pseudo-terminal to handle input reader
-          console.log(`Starting nexus-network with node ID: ${nodeId}`);
-          
-          // Create a pseudo-terminal for the node
-          const term = pty.spawn('nexus-network', ['start', '--node-id', nodeId], {
-            name: 'xterm-256color',
-            cols: 80,
-            rows: 30,
-            cwd: process.cwd(),
-            env: process.env
-          });
-
-          // Don't accumulate large outputs in memory (only to server console)
-          term.onData((data: string) => {
-            const output = data.toString();
-            terminalOutputBuffer += output;
-            if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
-              terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
-            }
-            process.stdout.write(output);
-          });
-
-          term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
-            if (exitCode === 0) {
-              console.log('✅ Node started successfully');
-              sendEvent({ type: 'status', message: '✅ Node started successfully' });
-              sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
-              sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
-            } else {
-              console.error('❌ Node start failed with code:', exitCode);
-              console.error('signal:', signal);
-              sendEvent({ type: 'error', message: '❌ Node start failed with code: ' + exitCode });
-              if (signal) {
-                sendEvent({ type: 'error', message: 'signal: ' + signal });
-              }
-            }
-            res.end();
-          });
-        } else {
-          sendEvent({ type: 'error', message: '❌ CLI installation failed with code: ' + code });
-          res.end();
-        }
-      });
+  // Stream all output to terminal console only (max 10MB)
+  installProcess.stdout.on('data', (data: Buffer) => {
+    const output = data.toString();
+    terminalOutputBuffer += output;
+    if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
+      terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
     }
+    process.stdout.write(output);
+  });
+
+  installProcess.stderr.on('data', (data: Buffer) => {
+    const output = data.toString();
+    terminalOutputBuffer += output;
+    if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
+      terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
+    }
+    process.stderr.write(output);
+  });
+
+  // Send Y for any prompts
+  installProcess.stdin.write('Y\n');
+  
+  installProcess.on('close', (code) => {
+    if (code === 0) {
+      sendEvent({ type: 'status', message: '✅ Nexus CLI installed successfully' });
+      console.log('✅ Nexus CLI installed successfully');
+      
+      // Update PATH
+      process.env.PATH = `${process.env.HOME}/.nexus/bin:${process.env.PATH}`;
+      console.log('Updated PATH:', process.env.PATH);
+      
+      sendEvent({ type: 'status', message: '✅ Setup completed successfully!' });
+      sendEvent({ type: 'complete', message: 'Nexus CLI is ready to use!' });
+    } else {
+      sendEvent({ type: 'error', message: '❌ Installation failed with code: ' + code });
+      console.error('❌ Installation failed with code:', code);
+    }
+    res.end();
   });
 });
 
