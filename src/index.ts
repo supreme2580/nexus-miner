@@ -2,7 +2,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import express from 'express';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
+import * as pty from 'node-pty';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -39,10 +40,21 @@ app.get('/', (req, res) => {
           
           eventSource.onmessage = function(event) {
             const data = JSON.parse(event.data);
-            const div = document.createElement('div');
-            div.className = 'status ' + (data.type === 'error' ? 'error' : data.type === 'complete' ? 'success' : 'info');
-            div.textContent = data.message;
-            output.appendChild(div);
+            
+            if (data.type === 'terminal') {
+              // Handle terminal output with colors
+              const pre = document.createElement('pre');
+              pre.style.cssText = 'margin: 0; padding: 5px; background: #000; color: #fff; font-family: monospace; font-size: 12px; white-space: pre-wrap;';
+              pre.textContent = data.output;
+              output.appendChild(pre);
+            } else {
+              // Handle regular status messages
+              const div = document.createElement('div');
+              div.className = 'status ' + (data.type === 'error' ? 'error' : data.type === 'complete' ? 'success' : 'info');
+              div.textContent = data.message;
+              output.appendChild(div);
+            }
+            
             output.scrollTop = output.scrollHeight;
             
             if (data.type === 'complete' || data.type === 'error') {
@@ -124,6 +136,16 @@ app.get('/run', (req, res) => {
     lastServerOutput = data.message;
   };
 
+  // Function to send raw terminal output with colors
+  const sendTerminalOutput = (output: string) => {
+    res.write(`data: ${JSON.stringify({ 
+      type: 'terminal', 
+      output: output,
+      timestamp: new Date().toISOString()
+    })}\n\n`);
+    lastServerOutput = output;
+  };
+
   sendEvent({ type: 'status', message: '🚀 Starting Nexus CLI setup...' });
   
   // Step 1: Check if nexus-cli is already installed
@@ -183,47 +205,106 @@ app.get('/run', (req, res) => {
         sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
         console.log('🚀 Starting Nexus node with ID:', nodeId);
         
-        // Start the node in background mode to avoid interactive input issues
-        exec(`nexus-network start --node-id ${nodeId} > /dev/null 2>&1 &`, (startError, startStdout, startStderr) => {
-          if (startError) {
-            console.error('❌ Node start failed:', startError.message);
-            sendEvent({ type: 'error', message: '❌ Node start failed: ' + startError.message });
-            if (startStderr) {
-              sendEvent({ type: 'error', message: 'Node start stderr: ' + startStderr });
+                  // First check if nexus-network is available
+          exec('which nexus-network', (whichError, whichStdout) => {
+            if (whichError) {
+              console.error('❌ nexus-network command not found');
+              sendEvent({ type: 'error', message: '❌ nexus-network command not found. Please ensure it is installed and in PATH.' });
+              res.end();
+              return;
             }
-            res.end();
-            return;
-          }
-          
-          // Give it a moment to start up
-          setTimeout(() => {
-            console.log('✅ Node started successfully in background');
-            sendEvent({ type: 'status', message: '✅ Node started successfully' });
-            sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
-            sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
-            res.end();
-          }, 2000);
-        });
+            
+            console.log(`nexus-network found at: ${whichStdout.trim()}`);
+            
+            // Try to run nexus-network with help to see if it works
+            exec('nexus-network --help', (helpError, helpStdout) => {
+              if (helpError) {
+                console.error('❌ nexus-network command failed:', helpError.message);
+                sendEvent({ type: 'error', message: '❌ nexus-network command failed: ' + helpError.message });
+                res.end();
+                return;
+              }
+              
+              console.log('nexus-network command is working');
+              
+              // Now try to start the node with pseudo-terminal to handle input reader
+              console.log(`Starting nexus-network with node ID: ${nodeId}`);
+              
+              // Create a pseudo-terminal
+              const term = pty.spawn('nexus-network', ['start', '--node-id', nodeId], {
+                name: 'xterm-256color',
+                cols: 80,
+                rows: 30,
+                cwd: process.cwd(),
+                env: process.env
+              });
+
+              let nodeOutput = '';
+              let nodeError = '';
+
+              term.onData((data) => {
+                const output = data.toString();
+                nodeOutput += output;
+                sendTerminalOutput(output);
+                process.stdout.write(output);
+              });
+
+              term.onExit(({ exitCode, signal }) => {
+                if (exitCode === 0) {
+                  console.log('✅ Node started successfully');
+                  sendEvent({ type: 'status', message: '✅ Node started successfully' });
+                  sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
+                  sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
+                } else {
+                  console.error('❌ Node start failed with code:', exitCode);
+                  console.error('signal:', signal);
+                  sendEvent({ type: 'error', message: '❌ Node start failed with code: ' + exitCode });
+                  if (signal) {
+                    sendEvent({ type: 'error', message: 'signal: ' + signal });
+                  }
+                }
+                res.end();
+              });
+            });
+          });
       });
     } else {
       // CLI not found, use direct installation
       sendEvent({ type: 'status', message: '📦 Installing Nexus CLI with direct method...' });
       console.log('📦 Installing Nexus CLI with direct method...');
       
-      // Use direct curl installation with yes to accept terms
-      exec(`curl -fsSL https://cli.nexus.xyz/ | sed '/read -p.*\/dev\/tty/d' | sh`, (error, stdout, stderr) => {
-        if (error) {
-          console.error('❌ CLI installation failed:', error.message);
-          sendEvent({ type: 'error', message: '❌ CLI installation failed: ' + error.message });
-          if (stderr) {
-            sendEvent({ type: 'error', message: 'Stderr: ' + stderr });
-          }
+      // Use spawn for real-time streaming of the installation
+      const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sed \'/read -p.*\/dev\/tty/d\' | sh'], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      // Stream stdout in real-time
+      installProcess.stdout.on('data', (data) => {
+        const output = data.toString();
+        sendTerminalOutput(output);
+        // Log to server console with colors preserved
+        process.stdout.write(output);
+      });
+
+      // Stream stderr in real-time
+      installProcess.stderr.on('data', (data) => {
+        const output = data.toString();
+        sendTerminalOutput(output);
+        // Log to server console with colors preserved
+        process.stderr.write(output);
+      });
+
+      // Handle process completion
+      installProcess.on('close', (code) => {
+        if (code === 0) {
+          sendEvent({ type: 'status', message: '✅ Nexus CLI installed successfully' });
+          console.log('✅ Nexus CLI installed successfully');
+        } else {
+          console.error('❌ CLI installation failed with code:', code);
+          sendEvent({ type: 'error', message: '❌ CLI installation failed with code: ' + code });
           res.end();
           return;
         }
-        
-        sendEvent({ type: 'status', message: '✅ Nexus CLI installed successfully' });
-        console.log('✅ Nexus CLI installed successfully');
         
         // Restart terminal environment
         sendEvent({ type: 'status', message: '🔄 Restarting terminal environment...' });
@@ -269,26 +350,42 @@ app.get('/run', (req, res) => {
           sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
           console.log('🚀 Starting Nexus node with ID:', nodeId);
           
-          // Start the node in background mode to avoid interactive input issues
-          exec(`nexus-network start --node-id ${nodeId} > /dev/null 2>&1 &`, (startError, startStdout, startStderr) => {
-            if (startError) {
-              console.error('❌ Node start failed:', startError.message);
-              sendEvent({ type: 'error', message: '❌ Node start failed: ' + startError.message });
-              if (startStderr) {
-                sendEvent({ type: 'error', message: 'Node start stderr: ' + startStderr });
-              }
-              res.end();
-              return;
-            }
-            
-            // Give it a moment to start up
-            setTimeout(() => {
-              console.log('✅ Node started successfully in background');
+          // Start the node with pseudo-terminal to handle input reader
+          console.log(`Starting nexus-network with node ID: ${nodeId}`);
+          
+          // Create a pseudo-terminal for background installation
+          const term = pty.spawn('nexus-network', ['start', '--node-id', nodeId], {
+            name: 'xterm-256color',
+            cols: 80,
+            rows: 30,
+            cwd: process.cwd(),
+            env: process.env
+          });
+
+          let nodeOutput = '';
+
+          term.onData((data) => {
+            const output = data.toString();
+            nodeOutput += output;
+            sendTerminalOutput(output);
+            process.stdout.write(output);
+          });
+
+          term.onExit(({ exitCode, signal }) => {
+            if (exitCode === 0) {
+              console.log('✅ Node started successfully');
               sendEvent({ type: 'status', message: '✅ Node started successfully' });
               sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
               sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
-              res.end();
-            }, 2000);
+            } else {
+              console.error('❌ Node start failed with code:', exitCode);
+              console.error('signal:', signal);
+              sendEvent({ type: 'error', message: '❌ Node start failed with code: ' + exitCode });
+              if (signal) {
+                sendEvent({ type: 'error', message: 'signal: ' + signal });
+              }
+            }
+            res.end();
           });
         });
       });
