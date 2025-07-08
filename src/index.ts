@@ -277,8 +277,8 @@ app.get('/run', (req, res) => {
       sendEvent({ type: 'status', message: '📦 Installing Nexus CLI with direct method...' });
       console.log('📦 Installing Nexus CLI with direct method...');
 
-      // Step 1: Install Rust if not present
-      exec('which cargo', (cargoError, cargoStdout) => {
+      // Step 1: Check if Rust is installed using cargo -V
+      exec('cargo -V', (cargoError, cargoStdout) => {
         if (cargoError) {
           sendEvent({ type: 'status', message: '🦀 Rust not found. Installing Rust (cargo)...' });
           console.log('🦀 Rust not found. Installing Rust (cargo)...');
@@ -309,6 +309,8 @@ app.get('/run', (req, res) => {
           });
         } else {
           // Rust is already installed
+          sendEvent({ type: 'status', message: '✅ Rust is already installed: ' + cargoStdout.trim() });
+          console.log('✅ Rust is already installed:', cargoStdout.trim());
           process.env.PATH = `${process.env.HOME}/.cargo/bin:${process.env.PATH}`;
           installNexusCLI();
         }
