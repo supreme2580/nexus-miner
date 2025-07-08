@@ -164,7 +164,8 @@ app.get('/run', (req, res) => {
   sendEvent({ type: 'status', message: '📦 Installing Nexus CLI...' });
   console.log('📦 Installing Nexus CLI...');
   
-  const installProcess = spawn('sh', ['-c', 'curl https://cli.nexus.xyz/ | sh'], {
+  // Use non-interactive installation method
+  const installProcess = spawn('sh', ['-c', 'curl -sSf https://cli.nexus.xyz/ -o install.sh && chmod +x install.sh && NONINTERACTIVE=1 ./install.sh'], {
     stdio: ['pipe', 'pipe', 'pipe']
   });
 
