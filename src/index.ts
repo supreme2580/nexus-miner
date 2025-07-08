@@ -5,6 +5,9 @@ import express from 'express';
 import { exec, spawn } from 'child_process';
 import * as pty from 'node-pty';
 
+const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB
+let terminalOutputBuffer = '';
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -271,12 +274,15 @@ app.get('/run', (req, res) => {
                 env: process.env
               });
 
-              // Don't accumulate large outputs in memory
-              term.onData((data: string) => {
-                const output = data.toString();
-                sendTerminalOutput(output);
-                process.stdout.write(output);
-              });
+                        // Don't accumulate large outputs in memory (only to server console)
+          term.onData((data: string) => {
+            const output = data.toString();
+            terminalOutputBuffer += output;
+            if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
+              terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
+            }
+            process.stdout.write(output);
+          });
 
               term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
                 if (exitCode === 0) {
@@ -310,15 +316,21 @@ app.get('/run', (req, res) => {
         stdio: ['pipe', 'pipe', 'pipe']
       });
 
-      // Memory-efficient streaming - process data in chunks
+      // Memory-efficient streaming - process data in chunks (only to server console)
       installProcess.stdout.on('data', (data: Buffer) => {
         const output = data.toString();
-        sendTerminalOutput(output);
+        terminalOutputBuffer += output;
+        if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
+          terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
+        }
         process.stdout.write(output);
       });
       installProcess.stderr.on('data', (data: Buffer) => {
         const output = data.toString();
-        sendTerminalOutput(output);
+        terminalOutputBuffer += output;
+        if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
+          terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
+        }
         process.stderr.write(output);
       });
 
@@ -358,10 +370,13 @@ app.get('/run', (req, res) => {
             env: process.env
           });
 
-          // Don't accumulate large outputs in memory
+          // Don't accumulate large outputs in memory (only to server console)
           term.onData((data: string) => {
             const output = data.toString();
-            sendTerminalOutput(output);
+            terminalOutputBuffer += output;
+            if (terminalOutputBuffer.length > MAX_OUTPUT_BYTES) {
+              terminalOutputBuffer = terminalOutputBuffer.slice(-MAX_OUTPUT_BYTES);
+            }
             process.stdout.write(output);
           });
 
