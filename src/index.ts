@@ -312,7 +312,8 @@ app.get('/run', (req, res) => {
       sendEvent({ type: 'status', message: '📦 Installing Nexus CLI...' });
       console.log('📦 Installing Nexus CLI...');
       
-      const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sh'], {
+      // Use a non-interactive installation approach
+      const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sed "s/read -p.*\\/dev\\/tty//g" | sh'], {
         stdio: ['pipe', 'pipe', 'pipe']
       });
 
@@ -334,8 +335,8 @@ app.get('/run', (req, res) => {
         process.stderr.write(output);
       });
 
-      // Handle interactive prompts by sending 'y' or 'yes' when needed
-      installProcess.stdin.write('y\n');
+      // Send 'Y' responses for any remaining prompts
+      installProcess.stdin.write('Y\n');
       
       installProcess.on('close', (code) => {
         if (code === 0) {
