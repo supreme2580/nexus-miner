@@ -276,127 +276,157 @@ app.get('/run', (req, res) => {
       // CLI not found, use direct installation
       sendEvent({ type: 'status', message: '📦 Installing Nexus CLI with direct method...' });
       console.log('📦 Installing Nexus CLI with direct method...');
-      
-      // Use spawn for real-time streaming of the installation
-      const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sed "s/read -p.*\\/dev\\/tty//g" | sh'], {
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
 
-      // Stream stdout in real-time
-      installProcess.stdout.on('data', (data) => {
-        const output = data.toString();
-        sendTerminalOutput(output);
-        // Log to server console with colors preserved
-        process.stdout.write(output);
-      });
+      // Step 1: Install Rust if not present
+      exec('which cargo', (cargoError, cargoStdout) => {
+        if (cargoError) {
+          sendEvent({ type: 'status', message: '🦀 Rust not found. Installing Rust (cargo)...' });
+          console.log('🦀 Rust not found. Installing Rust (cargo)...');
 
-      // Stream stderr in real-time
-      installProcess.stderr.on('data', (data) => {
-        const output = data.toString();
-        sendTerminalOutput(output);
-        // Log to server console with colors preserved
-        process.stderr.write(output);
-      });
+          const rustInstall = spawn('sh', ['-c', 'curl https://sh.rustup.rs -sSf | sh -s -- -y'], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-      // Handle process completion
-      installProcess.on('close', (code) => {
-        if (code === 0) {
-          sendEvent({ type: 'status', message: '✅ Nexus CLI installed successfully' });
-          console.log('✅ Nexus CLI installed successfully');
-        } else {
-          console.error('❌ CLI installation failed with code:', code);
-          sendEvent({ type: 'error', message: '❌ CLI installation failed with code: ' + code });
-          res.end();
-          return;
-        }
-        
-        // Restart terminal environment
-        sendEvent({ type: 'status', message: '🔄 Restarting terminal environment...' });
-        console.log('🔄 Restarting terminal environment...');
-        
-        // Detect shell and use appropriate profile
-        const shell = process.env.SHELL || '';
-        let profileFile = '~/.zshrc'; // default
-        
-        console.log('🔍 Detected shell:', shell);
-        sendEvent({ type: 'status', message: '🔍 Detected shell: ' + shell });
-        
-        if (shell.includes('bash')) {
-          profileFile = '~/.bashrc';
-        } else if (shell.includes('zsh')) {
-          profileFile = '~/.zshrc';
-        } else if (shell.includes('fish')) {
-          profileFile = '~/.config/fish/config.fish';
-        } else {
-          profileFile = '~/.profile';
-        }
-        
-        sendEvent({ type: 'status', message: '📝 Using shell profile: ' + profileFile });
-        console.log('📝 Using shell profile:', profileFile);
-        
-        // Skip sourcing problematic profile and just export PATH directly
-        sendEvent({ type: 'status', message: '🔄 Updating PATH directly...' });
-        console.log('🔄 Updating PATH directly...');
-        
-        // Set PATH in current process environment
-        process.env.PATH = `${process.env.HOME}/.nexus/bin:${process.env.PATH}`;
-        console.log('Updated PATH:', process.env.PATH);
-        
-        exec('echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
-          if (sourceError) {
-            console.error('❌ Failed to restart terminal:', sourceError.message);
-            sendEvent({ type: 'error', message: '❌ Failed to restart terminal: ' + sourceError.message });
-            res.end();
-            return;
-          }
-          
-          sendEvent({ type: 'status', message: '✅ Terminal environment updated' });
-          console.log('✅ Terminal environment updated');
-          
-          // Start the node with node ID
-          const nodeId = process.env.NEXUS_NODE_ID || '12954263'; // Use the node ID from previous run
-          sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
-          console.log('🚀 Starting Nexus node with ID:', nodeId);
-          
-          // Start the node with pseudo-terminal to handle input reader
-          console.log(`Starting nexus-network with node ID: ${nodeId}`);
-          
-          // Create a pseudo-terminal for background installation
-          const term = pty.spawn('nexus-network', ['start', '--node-id', nodeId], {
-            name: 'xterm-256color',
-            cols: 80,
-            rows: 30,
-            cwd: process.cwd(),
-            env: process.env
-          });
-
-          let nodeOutput = '';
-
-          term.onData((data: string) => {
+          rustInstall.stdout.on('data', (data: Buffer) => {
             const output = data.toString();
-            nodeOutput += output;
             sendTerminalOutput(output);
             process.stdout.write(output);
           });
-
-          term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
-            if (exitCode === 0) {
-              console.log('✅ Node started successfully');
-              sendEvent({ type: 'status', message: '✅ Node started successfully' });
-              sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
-              sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
-            } else {
-              console.error('❌ Node start failed with code:', exitCode);
-              console.error('signal:', signal);
-              sendEvent({ type: 'error', message: '❌ Node start failed with code: ' + exitCode });
-              if (signal) {
-                sendEvent({ type: 'error', message: 'signal: ' + signal });
-              }
-            }
-            res.end();
+          rustInstall.stderr.on('data', (data: Buffer) => {
+            const output = data.toString();
+            sendTerminalOutput(output);
+            process.stderr.write(output);
           });
-        });
+
+          rustInstall.on('close', (rustCode) => {
+            if (rustCode === 0) {
+              sendEvent({ type: 'status', message: '✅ Rust installed successfully' });
+              process.env.PATH = `${process.env.HOME}/.cargo/bin:${process.env.PATH}`;
+              // Proceed to Nexus CLI install
+              installNexusCLI();
+            } else {
+              sendEvent({ type: 'error', message: '❌ Rust installation failed with code: ' + rustCode });
+              res.end();
+            }
+          });
+        } else {
+          // Rust is already installed
+          process.env.PATH = `${process.env.HOME}/.cargo/bin:${process.env.PATH}`;
+          installNexusCLI();
+        }
       });
+
+      // Helper function to install Nexus CLI
+      function installNexusCLI() {
+        sendEvent({ type: 'status', message: '📦 Installing Nexus CLI...' });
+        const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sh'], {
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+        installProcess.stdout.on('data', (data: Buffer) => {
+          const output = data.toString();
+          sendTerminalOutput(output);
+          process.stdout.write(output);
+        });
+        installProcess.stderr.on('data', (data: Buffer) => {
+          const output = data.toString();
+          sendTerminalOutput(output);
+          process.stderr.write(output);
+        });
+        installProcess.on('close', (code) => {
+          if (code === 0) {
+            sendEvent({ type: 'status', message: '✅ Nexus CLI installed successfully' });
+            console.log('✅ Nexus CLI installed successfully');
+            // Continue with PATH update and node start as before
+            // Restart terminal environment
+            sendEvent({ type: 'status', message: '🔄 Restarting terminal environment...' });
+            console.log('🔄 Restarting terminal environment...');
+            
+            // Detect shell and use appropriate profile
+            const shell = process.env.SHELL || '';
+            let profileFile = '~/.zshrc'; // default
+            
+            console.log('🔍 Detected shell:', shell);
+            sendEvent({ type: 'status', message: '🔍 Detected shell: ' + shell });
+            
+            if (shell.includes('bash')) {
+              profileFile = '~/.bashrc';
+            } else if (shell.includes('zsh')) {
+              profileFile = '~/.zshrc';
+            } else if (shell.includes('fish')) {
+              profileFile = '~/.config/fish/config.fish';
+            } else {
+              profileFile = '~/.profile';
+            }
+            
+            sendEvent({ type: 'status', message: '📝 Using shell profile: ' + profileFile });
+            console.log('📝 Using shell profile:', profileFile);
+            
+            // Skip sourcing problematic profile and just export PATH directly
+            sendEvent({ type: 'status', message: '🔄 Updating PATH directly...' });
+            console.log('🔄 Updating PATH directly...');
+            
+            // Set PATH in current process environment
+            process.env.PATH = `${process.env.HOME}/.nexus/bin:${process.env.PATH}`;
+            console.log('Updated PATH:', process.env.PATH);
+            
+            exec('echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
+              if (sourceError) {
+                console.error('❌ Failed to restart terminal:', sourceError.message);
+                sendEvent({ type: 'error', message: '❌ Failed to restart terminal: ' + sourceError.message });
+                res.end();
+                return;
+              }
+              
+              sendEvent({ type: 'status', message: '✅ Terminal environment updated' });
+              console.log('✅ Terminal environment updated');
+              
+              // Start the node with node ID
+              const nodeId = process.env.NEXUS_NODE_ID || '12954263'; // Use the node ID from previous run
+              sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
+              console.log('🚀 Starting Nexus node with ID:', nodeId);
+              
+              // Start the node with pseudo-terminal to handle input reader
+              console.log(`Starting nexus-network with node ID: ${nodeId}`);
+              
+              // Create a pseudo-terminal for background installation
+              const term = pty.spawn('nexus-network', ['start', '--node-id', nodeId], {
+                name: 'xterm-256color',
+                cols: 80,
+                rows: 30,
+                cwd: process.cwd(),
+                env: process.env
+              });
+
+              let nodeOutput = '';
+
+              term.onData((data: string) => {
+                const output = data.toString();
+                nodeOutput += output;
+                sendTerminalOutput(output);
+                process.stdout.write(output);
+              });
+
+              term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
+                if (exitCode === 0) {
+                  console.log('✅ Node started successfully');
+                  sendEvent({ type: 'status', message: '✅ Node started successfully' });
+                  sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
+                  sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
+                } else {
+                  console.error('❌ Node start failed with code:', exitCode);
+                  console.error('signal:', signal);
+                  sendEvent({ type: 'error', message: '❌ Node start failed with code: ' + exitCode });
+                  if (signal) {
+                    sendEvent({ type: 'error', message: 'signal: ' + signal });
+                  }
+                }
+                res.end();
+              });
+            });
+          } else {
+            sendEvent({ type: 'error', message: '❌ CLI installation failed with code: ' + code });
+            res.end();
+          }
+        });
+      }
     }
   });
 });
