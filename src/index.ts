@@ -8,6 +8,22 @@ import * as pty from 'node-pty';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Memory monitoring for 512MB limit
+const logMemoryUsage = () => {
+  const memUsage = process.memoryUsage();
+  const memMB = {
+    rss: Math.round(memUsage.rss / 1024 / 1024),
+    heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+    heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024)
+  };
+  console.log(`Memory usage: RSS=${memMB.rss}MB, Heap=${memMB.heapUsed}/${memMB.heapTotal}MB`);
+  
+  // Warn if approaching 512MB limit
+  if (memMB.rss > 400) {
+    console.warn(`⚠️ High memory usage: ${memMB.rss}MB`);
+  }
+};
+
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -77,8 +93,9 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Nexus node service is active.' });
 });
 
-// Global variable to store the last server output
-let lastServerOutput = '🚀 Nexus Network CLI Setup Server is running...';
+  // Global variable to store the last server output (limited size for memory efficiency)
+  let lastServerOutput = '🚀 Nexus Network CLI Setup Server is running...';
+  const MAX_OUTPUT_SIZE = 1024; // Limit output to 1KB to prevent memory bloat
 
 app.get('/keep-alive', (req, res) => {
   // Set headers for Server-Sent Events to keep connection alive
@@ -100,9 +117,11 @@ app.get('/keep-alive', (req, res) => {
   // Send initial message
   sendKeepAlive();
 
-  // Send keep-alive message every 30 seconds
+  // Send keep-alive message every 30 seconds (memory efficient)
   const keepAliveInterval = setInterval(() => {
     sendKeepAlive();
+    // Hint to garbage collector
+    if (global.gc) global.gc();
   }, 30000);
 
   // Clean up on client disconnect
@@ -132,21 +151,30 @@ app.get('/run', (req, res) => {
 
   const sendEvent = (data: any) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
-    // Update the last server output for keep-alive endpoint
-    lastServerOutput = data.message;
+    // Update the last server output for keep-alive endpoint (truncated for memory efficiency)
+    if (data.message && data.message.length > MAX_OUTPUT_SIZE) {
+      lastServerOutput = data.message.substring(0, MAX_OUTPUT_SIZE) + '...';
+    } else {
+      lastServerOutput = data.message || lastServerOutput;
+    }
   };
 
-  // Function to send raw terminal output with colors
+  // Function to send raw terminal output with colors (memory efficient)
   const sendTerminalOutput = (output: string) => {
+    // Truncate output if too large to prevent memory bloat
+    const truncatedOutput = output.length > MAX_OUTPUT_SIZE ? 
+      output.substring(0, MAX_OUTPUT_SIZE) + '...' : output;
+    
     res.write(`data: ${JSON.stringify({ 
       type: 'terminal', 
-      output: output,
+      output: truncatedOutput,
       timestamp: new Date().toISOString()
     })}\n\n`);
-    lastServerOutput = output;
+    lastServerOutput = truncatedOutput;
   };
 
   sendEvent({ type: 'status', message: '🚀 Starting Nexus CLI setup...' });
+  logMemoryUsage();
   
   // Step 1: Check if nexus-cli is already installed
   sendEvent({ type: 'status', message: '🔍 Checking if Nexus CLI is already installed...' });
@@ -243,12 +271,9 @@ app.get('/run', (req, res) => {
                 env: process.env
               });
 
-              let nodeOutput = '';
-              let nodeError = '';
-
+              // Don't accumulate large outputs in memory
               term.onData((data: string) => {
                 const output = data.toString();
-                nodeOutput += output;
                 sendTerminalOutput(output);
                 process.stdout.write(output);
               });
@@ -277,162 +302,98 @@ app.get('/run', (req, res) => {
       sendEvent({ type: 'status', message: '📦 Installing Nexus CLI with direct method...' });
       console.log('📦 Installing Nexus CLI with direct method...');
 
-      // Step 1: Check if Rust is installed using cargo -V
-      exec('cargo -V', (cargoError, cargoStdout) => {
-        if (cargoError) {
-          sendEvent({ type: 'status', message: '🦀 Rust not found. Installing Rust (cargo)...' });
-          console.log('🦀 Rust not found. Installing Rust (cargo)...');
+            // Install Nexus CLI directly with automatic yes responses
+      sendEvent({ type: 'status', message: '📦 Installing Nexus CLI...' });
+      console.log('📦 Installing Nexus CLI...');
+      
+      const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sh'], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
 
-          const rustInstall = spawn('sh', ['-c', 'curl https://sh.rustup.rs -sSf | sh -s -- -y'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      // Memory-efficient streaming - process data in chunks
+      installProcess.stdout.on('data', (data: Buffer) => {
+        const output = data.toString();
+        sendTerminalOutput(output);
+        process.stdout.write(output);
+      });
+      installProcess.stderr.on('data', (data: Buffer) => {
+        const output = data.toString();
+        sendTerminalOutput(output);
+        process.stderr.write(output);
+      });
 
-          rustInstall.stdout.on('data', (data: Buffer) => {
+      // Handle interactive prompts by sending 'y' or 'yes' when needed
+      installProcess.stdin.write('y\n');
+      
+      installProcess.on('close', (code) => {
+        if (code === 0) {
+          sendEvent({ type: 'status', message: '✅ Nexus CLI installed successfully' });
+          console.log('✅ Nexus CLI installed successfully');
+          
+          // Restart terminal environment
+          sendEvent({ type: 'status', message: '🔄 Restarting terminal environment...' });
+          console.log('🔄 Restarting terminal environment...');
+          
+          // Set PATH in current process environment
+          process.env.PATH = `${process.env.HOME}/.nexus/bin:${process.env.PATH}`;
+          console.log('Updated PATH:', process.env.PATH);
+          
+          sendEvent({ type: 'status', message: '✅ Terminal environment updated' });
+          console.log('✅ Terminal environment updated');
+          
+          // Start the node with node ID
+          const nodeId = process.env.NEXUS_NODE_ID || '13092844'; // Use a default node ID
+          sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
+          console.log('🚀 Starting Nexus node with ID:', nodeId);
+          
+          // Start the node with pseudo-terminal to handle input reader
+          console.log(`Starting nexus-network with node ID: ${nodeId}`);
+          
+          // Create a pseudo-terminal for the node
+          const term = pty.spawn('nexus-network', ['start', '--node-id', nodeId], {
+            name: 'xterm-256color',
+            cols: 80,
+            rows: 30,
+            cwd: process.cwd(),
+            env: process.env
+          });
+
+          // Don't accumulate large outputs in memory
+          term.onData((data: string) => {
             const output = data.toString();
             sendTerminalOutput(output);
             process.stdout.write(output);
           });
-          rustInstall.stderr.on('data', (data: Buffer) => {
-            const output = data.toString();
-            sendTerminalOutput(output);
-            process.stderr.write(output);
-          });
 
-          rustInstall.on('close', (rustCode) => {
-            if (rustCode === 0) {
-              sendEvent({ type: 'status', message: '✅ Rust installed successfully' });
-              process.env.PATH = `${process.env.HOME}/.cargo/bin:${process.env.PATH}`;
-              // Proceed to Nexus CLI install
-              installNexusCLI();
+          term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
+            if (exitCode === 0) {
+              console.log('✅ Node started successfully');
+              sendEvent({ type: 'status', message: '✅ Node started successfully' });
+              sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
+              sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
             } else {
-              sendEvent({ type: 'error', message: '❌ Rust installation failed with code: ' + rustCode });
-              res.end();
+              console.error('❌ Node start failed with code:', exitCode);
+              console.error('signal:', signal);
+              sendEvent({ type: 'error', message: '❌ Node start failed with code: ' + exitCode });
+              if (signal) {
+                sendEvent({ type: 'error', message: 'signal: ' + signal });
+              }
             }
+            res.end();
           });
         } else {
-          // Rust is already installed
-          sendEvent({ type: 'status', message: '✅ Rust is already installed: ' + cargoStdout.trim() });
-          console.log('✅ Rust is already installed:', cargoStdout.trim());
-          process.env.PATH = `${process.env.HOME}/.cargo/bin:${process.env.PATH}`;
-          installNexusCLI();
+          sendEvent({ type: 'error', message: '❌ CLI installation failed with code: ' + code });
+          res.end();
         }
       });
-
-      // Helper function to install Nexus CLI
-      function installNexusCLI() {
-        sendEvent({ type: 'status', message: '📦 Installing Nexus CLI...' });
-        const installProcess = spawn('sh', ['-c', 'curl -fsSL https://cli.nexus.xyz/ | sh'], {
-          stdio: ['ignore', 'pipe', 'pipe']
-        });
-        installProcess.stdout.on('data', (data: Buffer) => {
-          const output = data.toString();
-          sendTerminalOutput(output);
-          process.stdout.write(output);
-        });
-        installProcess.stderr.on('data', (data: Buffer) => {
-          const output = data.toString();
-          sendTerminalOutput(output);
-          process.stderr.write(output);
-        });
-        installProcess.on('close', (code) => {
-          if (code === 0) {
-            sendEvent({ type: 'status', message: '✅ Nexus CLI installed successfully' });
-            console.log('✅ Nexus CLI installed successfully');
-            // Continue with PATH update and node start as before
-            // Restart terminal environment
-            sendEvent({ type: 'status', message: '🔄 Restarting terminal environment...' });
-            console.log('🔄 Restarting terminal environment...');
-            
-            // Detect shell and use appropriate profile
-            const shell = process.env.SHELL || '';
-            let profileFile = '~/.zshrc'; // default
-            
-            console.log('🔍 Detected shell:', shell);
-            sendEvent({ type: 'status', message: '🔍 Detected shell: ' + shell });
-            
-            if (shell.includes('bash')) {
-              profileFile = '~/.bashrc';
-            } else if (shell.includes('zsh')) {
-              profileFile = '~/.zshrc';
-            } else if (shell.includes('fish')) {
-              profileFile = '~/.config/fish/config.fish';
-            } else {
-              profileFile = '~/.profile';
-            }
-            
-            sendEvent({ type: 'status', message: '📝 Using shell profile: ' + profileFile });
-            console.log('📝 Using shell profile:', profileFile);
-            
-            // Skip sourcing problematic profile and just export PATH directly
-            sendEvent({ type: 'status', message: '🔄 Updating PATH directly...' });
-            console.log('🔄 Updating PATH directly...');
-            
-            // Set PATH in current process environment
-            process.env.PATH = `${process.env.HOME}/.nexus/bin:${process.env.PATH}`;
-            console.log('Updated PATH:', process.env.PATH);
-            
-            exec('echo "PATH updated successfully"', (sourceError, sourceStdout, sourceStderr) => {
-              if (sourceError) {
-                console.error('❌ Failed to restart terminal:', sourceError.message);
-                sendEvent({ type: 'error', message: '❌ Failed to restart terminal: ' + sourceError.message });
-                res.end();
-                return;
-              }
-              
-              sendEvent({ type: 'status', message: '✅ Terminal environment updated' });
-              console.log('✅ Terminal environment updated');
-              
-              // Start the node with node ID
-              const nodeId = process.env.NEXUS_NODE_ID || '12954263'; // Use the node ID from previous run
-              sendEvent({ type: 'status', message: '🚀 Starting Nexus node with ID: ' + nodeId });
-              console.log('🚀 Starting Nexus node with ID:', nodeId);
-              
-              // Start the node with pseudo-terminal to handle input reader
-              console.log(`Starting nexus-network with node ID: ${nodeId}`);
-              
-              // Create a pseudo-terminal for background installation
-              const term = pty.spawn('nexus-network', ['start', '--node-id', nodeId], {
-                name: 'xterm-256color',
-                cols: 80,
-                rows: 30,
-                cwd: process.cwd(),
-                env: process.env
-              });
-
-              let nodeOutput = '';
-
-              term.onData((data: string) => {
-                const output = data.toString();
-                nodeOutput += output;
-                sendTerminalOutput(output);
-                process.stdout.write(output);
-              });
-
-              term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
-                if (exitCode === 0) {
-                  console.log('✅ Node started successfully');
-                  sendEvent({ type: 'status', message: '✅ Node started successfully' });
-                  sendEvent({ type: 'status', message: '🎉 Nexus node is now contributing to the network!' });
-                  sendEvent({ type: 'complete', message: 'Setup completed successfully! Node ID: ' + nodeId });
-                } else {
-                  console.error('❌ Node start failed with code:', exitCode);
-                  console.error('signal:', signal);
-                  sendEvent({ type: 'error', message: '❌ Node start failed with code: ' + exitCode });
-                  if (signal) {
-                    sendEvent({ type: 'error', message: 'signal: ' + signal });
-                  }
-                }
-                res.end();
-              });
-            });
-          } else {
-            sendEvent({ type: 'error', message: '❌ CLI installation failed with code: ' + code });
-            res.end();
-          }
-        });
-      }
     }
   });
 });
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  logMemoryUsage();
+  
+  // Log memory usage every 5 minutes
+  setInterval(logMemoryUsage, 5 * 60 * 1000);
 }); 
